@@ -1,0 +1,779 @@
+{
+  "name": "WF-orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "id": "tg_trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        220
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_BOT_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const msg = $json.message || {};\nconst text = msg.text || '';\nconst chatId = msg.chat?.id || msg.from?.id;\nconst urlRegex = /(https?:\\/\\/[^\\s]+)/i;\nconst urlMatch = text.match(urlRegex);\nconst url = urlMatch ? urlMatch[1] : null;\nconst cmd = text.trim().toLowerCase();\nreturn [{\n  json: {\n    chatId,\n    text,\n    url,\n    cmd\n  }\n}];\n"
+      },
+      "id": "extract",
+      "name": "Extract Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        520,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "resource": "database",
+        "schema": "public",
+        "table": "bot_sessions",
+        "filtersUi": {
+          "filter": [
+            {
+              "column": "telegram_user_id",
+              "condition": "equals",
+              "value": "={{$json[\"chatId\"]}}"
+            },
+            {
+              "column": "status",
+              "condition": "equals",
+              "value": "active"
+            }
+          ]
+        },
+        "orderByUi": {
+          "orderBy": [
+            {
+              "column": "started_at",
+              "direction": "desc"
+            }
+          ]
+        },
+        "limit": 1,
+        "returnFields": "*"
+      },
+      "id": "get_session",
+      "name": "Get Session",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        800,
+        220
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const text = $json.text || '';\nconst cmd = (text || '').toLowerCase();\nconst url = $json.url || null;\nconst hasSession = $items('Get Session')[0]?.json?.length > 0;\nconst session = hasSession ? $items('Get Session')[0].json[0] : null;\nlet route = 'ignore';\n// Entry commands\nif (cmd.includes('новый клиент') || cmd === '/start' || cmd === 'new client') {\n  route = 'ask_url';\n} else if (session && session.current_step === 'ask_url' && url) {\n  route = 'create_client';\n} else if (cmd.includes('добавить блогеров')) {\n  route = 'ask_cabinet';\n} else if (session && session.current_step === 'ask_cabinet') {\n  route = 'add_more';\n}\nreturn [{json: {...$json, route, session}}];\n"
+      },
+      "id": "decide",
+      "name": "Decide Route",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"route\"]}}",
+              "operation": "equal",
+              "value2": "ask_url"
+            }
+          ]
+        }
+      },
+      "id": "if_ask_url",
+      "name": "IF ask_url",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "resource": "database",
+        "schema": "public",
+        "table": "bot_sessions",
+        "columns": "telegram_user_id,current_step,status",
+        "values": "={{$json[\"chatId\"]}},ask_url,active",
+        "returnFields": "*"
+      },
+      "id": "insert_session_ask_url",
+      "name": "Insert Session (ask_url)",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        40
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "resource": "message",
+        "chatId": "={{$json[\"chatId\"]}}",
+        "text": "Пришлите ссылку на сайт клиента (например, https://kubik-lab.ru/offspringnatural-555510)",
+        "additionalFields": {
+          "replyMarkup": {
+            "keyboard": [
+              [
+                {
+                  "text": "Добавить блогеров"
+                }
+              ]
+            ],
+            "resize_keyboard": true,
+            "one_time_keyboard": false
+          }
+        }
+      },
+      "id": "tg_ask_url",
+      "name": "Telegram Ask URL",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1900,
+        40
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_BOT_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"route\"]}}",
+              "operation": "equal",
+              "value2": "create_client"
+            }
+          ]
+        }
+      },
+      "id": "if_create_client",
+      "name": "IF create_client",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "function slugify(s){\n  return (s||'').toLowerCase().replace(/[^a-z0-9а-яё]+/gi,'-').replace(/^-+|-+$/g,'');\n}\nconst url = $json.url;\nconst rnd = Math.floor(100000 + Math.random()*899999);\n// вытащим хвост из URL для slug\nlet tail = url;\ntry {\n  const u = new URL(url);\n  tail = u.pathname.replace(/\\/+$/,'').split('/').pop() || 'client';\n} catch(e){}\nconst left = slugify(tail);\nconst oldUrl = `https://kubik-lab.ru/${left}`;\nconst newUrl = `https://kubik-lab.ru/${rnd}-${left}`;\nconst client_identifier = `${left}-${rnd}`;\nreturn [{\n  json: {\n    website_url: url,\n    client_identifier,\n    selection_url: oldUrl,\n    subscription_url: newUrl\n  }\n}];\n"
+      },
+      "id": "prep_client",
+      "name": "Prepare Client",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "resource": "database",
+        "schema": "public",
+        "table": "clients",
+        "columns": "client_identifier,website_url,selection_url,subscription_url",
+        "values": "={{$json[\"client_identifier\"]}},{{$json[\"website_url\"]}},{{$json[\"selection_url\"]}},{{$json[\"subscription_url\"]}}",
+        "returnFields": "id,client_identifier,selection_url,subscription_url,website_url"
+      },
+      "id": "insert_client",
+      "name": "Insert Client",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1880,
+        260
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "resource": "message",
+        "chatId": "={{$json[\"chatId\"]}}",
+        "text": "Кабинет создан. Ссылки:\\nСтарая версия: {{$json[\"selection_url\"]}}\\nНовая версия: {{$json[\"subscription_url\"]}}\\nНачинаю анализ и подборку…",
+        "additionalFields": {
+          "replyMarkup": {
+            "keyboard": [
+              [
+                {
+                  "text": "Добавить блогеров"
+                }
+              ]
+            ],
+            "resize_keyboard": true
+          }
+        }
+      },
+      "id": "tg_send_links",
+      "name": "Telegram Send Links",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        2140,
+        260
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_BOT_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5678/webhook/analyze-site",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\"client_id\":\"={{$json[\"id\"]}}\",\"website_url\":\"={{$json[\"website_url\"]}}\"}"
+      },
+      "id": "call_site",
+      "name": "HTTP → Site Analyzer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5678/webhook/neuro-kubik",
+        "method": "POST",
+        "jsonParameters": true,
+        "bodyParametersJson": "{\"client_id\":\"={{$json[\"id\"]}}\"}"
+      },
+      "id": "call_neuro",
+      "name": "HTTP → Neuro Kubik",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5678/webhook/pick-bloggers",
+        "method": "POST",
+        "jsonParameters": true,
+        "bodyParametersJson": "{\"client_id\":\"={{$json[\"id\"]}}\",\"batchSize\":3}"
+      },
+      "id": "call_pick3",
+      "name": "HTTP → Pick Bloggers (3)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2920,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "resource": "message",
+        "chatId": "={{$json[\"chatId\"]}}",
+        "text": "Подборка из 3 блогеров сформирована и добавлена в кабинет клиента. Для расширения — нажмите «Добавить блогеров»."
+      },
+      "id": "tg_done",
+      "name": "Telegram Done",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        3180,
+        200
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_BOT_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"route\"]}}",
+              "operation": "equal",
+              "value2": "ask_cabinet"
+            }
+          ]
+        }
+      },
+      "id": "if_ask_cab",
+      "name": "IF ask_cabinet",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "resource": "database",
+        "schema": "public",
+        "table": "bot_sessions",
+        "updateKey": "telegram_user_id",
+        "updateKeyValue": "={{$json[\"chatId\"]}}",
+        "columns": "current_step",
+        "values": "ask_cabinet"
+      },
+      "id": "update_session_ask_cab",
+      "name": "Set Session ask_cabinet",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        420
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "resource": "message",
+        "chatId": "={{$json[\"chatId\"]}}",
+        "text": "Пришлите ссылку на кабинет клиента (старую или новую версию): https://kubik-lab.ru/slug-xxxx"
+      },
+      "id": "tg_ask_cab",
+      "name": "Telegram Ask Cabinet URL",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1900,
+        420
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_BOT_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"route\"]}}",
+              "operation": "equal",
+              "value2": "add_more"
+            }
+          ]
+        }
+      },
+      "id": "if_add_more",
+      "name": "IF add_more",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const t = $json.text || '';\nconst m = t.match(/https?:\\/\\/kubik-lab\\.ru\\/([^\\s]+)/i);\nconst slug = m ? m[1] : null;\nreturn [{json:{slug}}];\n"
+      },
+      "id": "parse_cab",
+      "name": "Parse Cabinet → client",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "resource": "database",
+        "schema": "public",
+        "table": "clients",
+        "filtersUi": {
+          "filter": [
+            {
+              "column": "selection_url",
+              "condition": "like",
+              "value": "={{`https://kubik-lab.ru/${$json[\"slug\"]}`}}"
+            },
+            {
+              "column": "subscription_url",
+              "condition": "like",
+              "value": "={{`https://kubik-lab.ru/${$json[\"slug\"]}`}}"
+            }
+          ]
+        },
+        "limit": 1,
+        "returnFields": "id,client_identifier,selection_url,subscription_url"
+      },
+      "id": "find_client_by_url",
+      "name": "Find Client by URL",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1880,
+        600
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const rows = $items('Find Client by URL')[0]?.json || [];\nif (!rows.length) {\n  throw new Error('Клиент не найден по ссылке');\n}\nreturn [{json: rows[0]}];\n"
+      },
+      "id": "ensure_client",
+      "name": "Ensure Client Found",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        2140,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:5678/webhook/pick-bloggers",
+        "method": "POST",
+        "jsonParameters": true,
+        "bodyParametersJson": "{\"client_id\":\"={{$json[\"id\"]}}\",\"batchSize\":10}"
+      },
+      "id": "call_pick10",
+      "name": "HTTP → Pick Bloggers (10)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "resource": "message",
+        "chatId": "={{$items(\"Extract Message\")[0].json.chatId}}",
+        "text": "Добавлено ещё 10 блогеров в подборку клиента."
+      },
+      "id": "tg_more_done",
+      "name": "Telegram Added 10",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        2660,
+        600
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_BOT_CREDENTIAL",
+          "name": "Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message": {
+      "main": [
+        [
+          {
+            "node": "Get Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Session": {
+      "main": [
+        [
+          {
+            "node": "Decide Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Route": {
+      "main": [
+        [
+          {
+            "node": "IF ask_url",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF create_client",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF ask_cabinet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF add_more",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF ask_url": {
+      "main": [
+        [
+          {
+            "node": "Insert Session (ask_url)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Insert Session (ask_url)": {
+      "main": [
+        [
+          {
+            "node": "Telegram Ask URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF create_client": {
+      "main": [
+        [
+          {
+            "node": "Prepare Client",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Client": {
+      "main": [
+        [
+          {
+            "node": "Insert Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Client": {
+      "main": [
+        [
+          {
+            "node": "Telegram Send Links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Send Links": {
+      "main": [
+        [
+          {
+            "node": "HTTP → Site Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP → Site Analyzer": {
+      "main": [
+        [
+          {
+            "node": "HTTP → Neuro Kubik",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP → Neuro Kubik": {
+      "main": [
+        [
+          {
+            "node": "HTTP → Pick Bloggers (3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP → Pick Bloggers (3)": {
+      "main": [
+        [
+          {
+            "node": "Telegram Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF ask_cabinet": {
+      "main": [
+        [
+          {
+            "node": "Set Session ask_cabinet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Set Session ask_cabinet": {
+      "main": [
+        [
+          {
+            "node": "Telegram Ask Cabinet URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF add_more": {
+      "main": [
+        [
+          {
+            "node": "Parse Cabinet → client",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Parse Cabinet → client": {
+      "main": [
+        [
+          {
+            "node": "Find Client by URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Client by URL": {
+      "main": [
+        [
+          {
+            "node": "Ensure Client Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Client Found": {
+      "main": [
+        [
+          {
+            "node": "HTTP → Pick Bloggers (10)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP → Pick Bloggers (10)": {
+      "main": [
+        [
+          {
+            "node": "Telegram Added 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "7e60b331-dfa8-49ae-bb8b-19f2a80f097d"
+}

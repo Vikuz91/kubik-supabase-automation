@@ -1,0 +1,233 @@
+{
+  "name": "WF-site-analyzer-v2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-site",
+        "responseMode": "lastNode"
+      },
+      "id": "hook",
+      "name": "Webhook /analyze-site",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"website_url\"]}}",
+        "options": {
+          "followRedirect": true
+        }
+      },
+      "id": "fetch",
+      "name": "HTTP Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "extractionValues": [
+          {
+            "key": "title",
+            "cssSelector": "title",
+            "returnArray": false
+          },
+          {
+            "key": "description",
+            "cssSelector": "meta[name='description']",
+            "attribute": "content",
+            "returnArray": false
+          },
+          {
+            "key": "body",
+            "cssSelector": "body",
+            "returnArray": false
+          }
+        ]
+      },
+      "id": "html",
+      "name": "HTML Extract",
+      "type": "n8n-nodes-base.htmlExtract",
+      "typeVersion": 1,
+      "position": [
+        780,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "        const body = ($json.body || '').replace(/\\s+/g,' ').slice(0,6000);\n        const prompt=`\nТы аналитик маркетинга. Сформируй только JSON без пояснений:\n{\n  \"audience_profile\": {...},\n  \"business_category\": \"\",\n  \"key_benefits\": [],\n  \"brand_description\": \"\"\n}\nДанные сайта:\nURL: ${$json.website_url}\nTitle: ${$json.title}\nDescription: ${$json.description}\nBody: ${body}\n`;\n        return [{json:{prompt}}];\n"
+      },
+      "id": "prep",
+      "name": "Function Build Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "method": "POST",
+        "jsonParameters": true,
+        "sendHeaders": true,
+        "headerParametersJson": "={{ {\"Authorization\":\"Bearer \"+$env.OPENAI_API_KEY,\"Content-Type\":\"application/json\"} }}",
+        "bodyParametersJson": "={{ {\"model\":\"gpt-4o-mini\",\"temperature\":0.2,\"messages\":[{\"role\":\"system\",\"content\":\"Ты строгий аналитик. Отвечай строго JSON.\"},{\"role\":\"user\",\"content\": $json.prompt}] } }}"
+      },
+      "id": "openai",
+      "name": "OpenAI Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const txt=$json.choices[0].message.content||'{}';let data={};try{data=JSON.parse(txt);}catch(e){data={error:'parse'};}return [{json:data}];"
+      },
+      "id": "parse",
+      "name": "Parse JSON",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "resource": "database",
+        "schema": "public",
+        "table": "client_website_analysis",
+        "columns": "client_id,website_url,target_audience,business_category,key_benefits,brand_description,ai_analysis_raw",
+        "values": "={{$json.client_id}},{{$json.website_url}},{{$json.audience_profile}},{{$json.business_category}},{{$json.key_benefits}},{{$json.brand_description}},{{$json}}",
+        "returnFields": "id"
+      },
+      "id": "save",
+      "name": "Supabase Upsert",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1880,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "responseCode": 200,
+        "responseData": {
+          "responseBody": "{\"status\":\"done\"}"
+        }
+      },
+      "id": "resp",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2120,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook /analyze-site": {
+      "main": [
+        [
+          {
+            "node": "HTTP Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Fetch": {
+      "main": [
+        [
+          {
+            "node": "HTML Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML Extract": {
+      "main": [
+        [
+          {
+            "node": "Function Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Function Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON": {
+      "main": [
+        [
+          {
+            "node": "Supabase Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Upsert": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "e97efd78-fb7b-489f-8ac3-a977d8b8ec72"
+}

@@ -1,0 +1,268 @@
+{
+  "name": "WF-pick-bloggers",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pick-bloggers",
+        "responseMode": "lastNode"
+      },
+      "id": "hook",
+      "name": "Webhook /pick-bloggers",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{json:{client_id:$json.client_id, batchSize: Number($json.batchSize||3)}}];"
+      },
+      "id": "defaults",
+      "name": "Default batchSize",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "resource": "database",
+        "schema": "public",
+        "table": "client_website_analysis",
+        "filtersUi": {
+          "filter": [
+            {
+              "column": "client_id",
+              "condition": "equals",
+              "value": "={{$json[\"client_id\"]}}"
+            }
+          ]
+        },
+        "limit": 1,
+        "returnFields": "client_id,target_audience,business_category,key_benefits"
+      },
+      "id": "load_profile",
+      "name": "Load Profile",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        780,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "resource": "database",
+        "schema": "public",
+        "table": "bloggers",
+        "returnFields": "id,name,username,audience_description,content_category",
+        "limit": 200
+      },
+      "id": "candidates",
+      "name": "Load Candidates",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const profile = $items('Load Profile')[0]?.json?.[0] || {};\nconst bloggers = $items('Load Candidates')[0]?.json || [];\nconst batchSize = $item(0).json.batchSize;\nconst prompt = `Выбери ${batchSize} лучших блогеров для клиента по соответствию ЦА и качеству вовлечённости.\nВерни массив JSON {blogger_id, selection_reason, audience_match_score (0..100), predicted_effectiveness (0..100), integration_forecast, ranking_position}.\nПрофиль клиента: ${JSON.stringify(profile)}.\nКандидаты: ${JSON.stringify(bloggers)}`;\nreturn [{json:{prompt, batchSize}}];\n"
+      },
+      "id": "prep_rank_prompt",
+      "name": "Prepare Rank Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "method": "POST",
+        "jsonParameters": true,
+        "sendHeaders": true,
+        "headerParametersJson": "{\"Authorization\":\"Bearer {{ $env.OPENAI_API_KEY }}\",\"Content-Type\":\"application/json\"}",
+        "bodyParametersJson": "{\n  \"model\":\"gpt-4o-mini\",\n  \"temperature\":0.2,\n  \"messages\":[\n    {\"role\":\"system\",\"content\":\"Строго JSON без комментариев.\"},\n    {\"role\":\"user\",\"content\":\"={{$json[\"prompt\"]}}\"}\n  ]\n}"
+      },
+      "id": "openai_rank",
+      "name": "OpenAI Rank (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const txt = $json.choices?.[0]?.message?.content || '[]';\nlet arr = [];\ntry { arr = JSON.parse(txt); } catch(e){ arr = []; }\nreturn arr.map(a => ({json:a}));\n"
+      },
+      "id": "parse_rank",
+      "name": "Parse Rank JSON",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "resource": "database",
+        "schema": "public",
+        "table": "client_ai_selections",
+        "columns": "client_id,blogger_id,selection_reason,audience_match_score,predicted_effectiveness,integration_forecast,ranking_position",
+        "values": "={{$items(\"Default batchSize\")[0].json.client_id}},{{$json[\"blogger_id\"]}},{{$json[\"selection_reason\"]}},{{$json[\"audience_match_score\"]}},{{$json[\"predicted_effectiveness\"]}},{{$json[\"integration_forecast\"]}},{{$json[\"ranking_position\"]}}",
+        "returnFields": "*"
+      },
+      "id": "insert_selections",
+      "name": "Insert client_ai_selections",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2180,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "responseCode": 200,
+        "responseData": {
+          "responseBody": "{\"status\":\"ready\"}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2460,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook /pick-bloggers": {
+      "main": [
+        [
+          {
+            "node": "Default batchSize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default batchSize": {
+      "main": [
+        [
+          {
+            "node": "Load Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Profile": {
+      "main": [
+        [
+          {
+            "node": "Load Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Candidates": {
+      "main": [
+        [
+          {
+            "node": "Prepare Rank Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Rank Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Rank (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Rank (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Parse Rank JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Rank JSON": {
+      "main": [
+        [
+          {
+            "node": "Insert client_ai_selections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert client_ai_selections": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "2c7672cf-321a-46d8-8028-6cfcb34d117d"
+}

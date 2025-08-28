@@ -1,0 +1,234 @@
+{
+  "name": "WF-site-analyzer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-site",
+        "responseMode": "lastNode"
+      },
+      "id": "hook",
+      "name": "Webhook /analyze-site",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"website_url\"]}}",
+        "options": {
+          "followRedirect": true,
+          "timeout": 30
+        }
+      },
+      "id": "fetch_html",
+      "name": "Fetch Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        520,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "extractionValues": [
+          {
+            "key": "title",
+            "cssSelector": "title",
+            "returnArray": false
+          },
+          {
+            "key": "description",
+            "cssSelector": "meta[name='description']",
+            "returnArray": false,
+            "attribute": "content"
+          },
+          {
+            "key": "body",
+            "cssSelector": "body",
+            "returnArray": false
+          }
+        ]
+      },
+      "id": "extract_html",
+      "name": "HTML Extract",
+      "type": "n8n-nodes-base.htmlExtract",
+      "typeVersion": 1,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const website_url = $json.website_url;\nconst title = $json.title || '';\nconst description = $json.description || '';\nlet body = ($json.body || '').replace(/\\s+/g,' ').slice(0, 8000);\nconst prompt = `Ты аналитик маркетинга. Проанализируй сайт и верни JSON c ключами:\naudience_profile: {segments:[], age_range, gender_ratio, interests:[], geo:[], pain_points:[], price_segment},\nbusiness_category: string,\nkey_benefits: string[],\nbrand_description: string (кратко).\nВходные данные:\nURL: ${website_url}\nTitle: ${title}\nDescription: ${description}\nBody: ${body}\nВерни только JSON.`;\nreturn [{json:{prompt, website_url}}];\n"
+      },
+      "id": "prep_prompt",
+      "name": "Prepare Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "method": "POST",
+        "jsonParameters": true,
+        "sendHeaders": true,
+        "headerParametersJson": "{\"Authorization\":\"Bearer {{ $env.OPENAI_API_KEY }}\",\"Content-Type\":\"application/json\"}",
+        "bodyParametersJson": "{\n  \"model\":\"gpt-4o-mini\",\n  \"temperature\":0.2,\n  \"messages\":[\n    {\"role\":\"system\",\"content\":\"Ты строгий аналитик. Отвечай строго в формате JSON.\"},\n    {\"role\":\"user\",\"content\":\"={{$json[\"prompt\"]}}\"}\n  ]\n}\n"
+      },
+      "id": "openai",
+      "name": "OpenAI Chat (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const raw = $json;\nlet txt = raw.choices?.[0]?.message?.content || '{}';\ntry {\n  const data = JSON.parse(txt);\n  return [{json: data}];\n} catch(e){\n  return [{json: {error:'Invalid JSON from AI', raw: txt}}];\n}\n"
+      },
+      "id": "parse_ai",
+      "name": "Parse AI JSON",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1640,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "resource": "database",
+        "schema": "public",
+        "table": "client_website_analysis",
+        "columns": "client_id,website_url,target_audience,business_category,key_benefits,brand_description,ai_analysis_raw",
+        "values": "={{$json[\"client_id\"]}},{{$json[\"website_url\"]}},{{$json[\"audience_profile\"]}},{{$json[\"business_category\"]}},{{$json[\"key_benefits\"]}},{{$json[\"brand_description\"]}},{{$json}}",
+        "returnFields": "*"
+      },
+      "id": "save_analysis",
+      "name": "Save to client_website_analysis",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "responseCode": 200,
+        "responseData": {
+          "responseBody": "{\"status\":\"done\"}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook /analyze-site": {
+      "main": [
+        [
+          {
+            "node": "Fetch Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Website": {
+      "main": [
+        [
+          {
+            "node": "HTML Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML Extract": {
+      "main": [
+        [
+          {
+            "node": "Prepare Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Parse AI JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI JSON": {
+      "main": [
+        [
+          {
+            "node": "Save to client_website_analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to client_website_analysis": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "fe328145-8008-41e8-bbd2-78cfcdcf00df"
+}

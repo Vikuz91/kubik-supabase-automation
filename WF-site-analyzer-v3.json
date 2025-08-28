@@ -1,0 +1,192 @@
+{
+  "name": "WF-site-analyzer-v3",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-site",
+        "responseMode": "lastNode"
+      },
+      "id": "hook",
+      "name": "Webhook /analyze-site",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        160,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"website_url\"]}}",
+        "options": {
+          "followRedirect": true,
+          "timeout": 30
+        }
+      },
+      "id": "fetch",
+      "name": "Fetch HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "        const html=$input.first().json.data || $node['Fetch HTML'].json.data || '';\n        const title=(html.match(/<title[^>]*>([^<]*)<\\/title>/i)||[])[1]||'';\n        const descMatch=html.match(/<meta[^>]*name=[\"']description[\"'][^>]*content=[\"']([^\"]+)[\"']/i);\n        const description=descMatch?descMatch[1]:'';\n        const text=html.replace(/<[^>]+>/g,' ').replace(/\\s+/g,' ').slice(0,6000);\n        const prompt=`Ты маркетинговый аналитик. Проанализируй сайт и верни ТОЛЬКО JSON:\n{\n  \"audience_profile\": {...},\n  \"business_category\": \"\",\n  \"key_benefits\": [],\n  \"brand_description\": \"\"\n}\nДанные:\nURL: ${$json.website_url}\nTitle: ${title}\nDescription: ${description}\nBody: ${text}`;\n        return [{json:{client_id:$json.client_id, website_url:$json.website_url, prompt}}];\n"
+      },
+      "id": "build",
+      "name": "Function BuildPrompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        760,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "method": "POST",
+        "jsonParameters": true,
+        "sendHeaders": true,
+        "headerParametersJson": "={{ {\"Authorization\":\"Bearer \"+$env.OPENAI_API_KEY,\"Content-Type\":\"application/json\"} }}",
+        "bodyParametersJson": "={{ JSON.stringify({model:\"gpt-4o-mini\",temperature:0.2,messages:[{role:\"system\",content:\"Отвечай строго JSON.\"},{role:\"user\",content:$json.prompt}]}) }}"
+      },
+      "id": "openai",
+      "name": "OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "let data={};try{data=JSON.parse($json.choices[0].message.content);}catch(e){data={error:'parse'}};return [{json:{client_id:$node['Function BuildPrompt'].json.client_id, website_url:$node['Function BuildPrompt'].json.website_url, ...data}}];"
+      },
+      "id": "parse",
+      "name": "Parse JSON",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "resource": "database",
+        "schema": "public",
+        "table": "client_website_analysis",
+        "additionalFields": {},
+        "data": "={{ $json }}"
+      },
+      "id": "save",
+      "name": "Upsert Analysis",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1660,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "responseCode": 200,
+        "responseData": {
+          "responseBody": "{\"status\":\"done\"}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1960,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook /analyze-site": {
+      "main": [
+        [
+          {
+            "node": "Fetch HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch HTML": {
+      "main": [
+        [
+          {
+            "node": "Function BuildPrompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Function BuildPrompt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON": {
+      "main": [
+        [
+          {
+            "node": "Upsert Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Analysis": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "97be0e54-b482-43d1-9ec5-f96e65c1d2e9"
+}

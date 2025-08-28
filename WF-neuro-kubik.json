@@ -1,0 +1,275 @@
+{
+  "name": "WF-neuro-kubik",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "neuro-kubik",
+        "responseMode": "lastNode"
+      },
+      "id": "hook",
+      "name": "Webhook /neuro-kubik",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        220,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "resource": "database",
+        "schema": "public",
+        "table": "client_website_analysis",
+        "filtersUi": {
+          "filter": [
+            {
+              "column": "client_id",
+              "condition": "equals",
+              "value": "={{$json[\"client_id\"]}}"
+            }
+          ]
+        },
+        "limit": 1,
+        "returnFields": "client_id,target_audience,business_category,key_benefits,brand_description"
+      },
+      "id": "get_profile",
+      "name": "Get Client Profile",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        520,
+        220
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "resource": "database",
+        "schema": "public",
+        "table": "bloggers",
+        "returnFields": "id,name,username,audience_description,content_category",
+        "limit": 200
+      },
+      "id": "get_bloggers",
+      "name": "Load Bloggers + platforms",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        800,
+        220
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 50
+      },
+      "id": "batch",
+      "name": "Split in Batches (50)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const profile = $items('Get Client Profile')[0]?.json?.[0] || {};\nconst items = $input.all();\nconst bloggers = items.map(i => i.json);\nconst prompt = {\n  role: \"user\",\n  content: `Ты аналитик влияния. Для каждого блогера оцени:\n    - match_score (0..100) — соответствие ЦА клиента\n    - engagement_quality: кратко\n    - integration_recommendations: кратко\n    - brand_safety_score (0..100)\n    Верни JSON массив объектов {blogger_id, match_score, engagement_quality, brand_safety_score, integration_recommendations}.\n    Профиль клиента: ${JSON.stringify(profile)}.\n    Блогеры: ${JSON.stringify(bloggers.slice(0,50))}`\n};\nreturn [{json:{prompt}}];\n"
+      },
+      "id": "prep_prompt",
+      "name": "Prepare AI Prompt (batch)",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "method": "POST",
+        "jsonParameters": true,
+        "sendHeaders": true,
+        "headerParametersJson": "{\"Authorization\":\"Bearer {{ $env.OPENAI_API_KEY }}\",\"Content-Type\":\"application/json\"}",
+        "bodyParametersJson": "{\n  \"model\":\"gpt-4o-mini\",\n  \"temperature\":0.2,\n  \"messages\":[\n    {\"role\":\"system\",\"content\":\"Отвечай строго JSON-массивом без комментариев.\"},\n    {{ $json.prompt }}\n  ]\n}"
+      },
+      "id": "openai",
+      "name": "OpenAI Chat (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1640,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const raw = $json;\nconst txt = raw.choices?.[0]?.message?.content || '[]';\nlet arr = [];\ntry { arr = JSON.parse(txt); } catch(e){ arr = []; }\nreturn arr.map(a => ({json:a}));\n"
+      },
+      "id": "parse",
+      "name": "Parse AI JSON",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "resource": "database",
+        "schema": "public",
+        "table": "blogger_ai_analysis",
+        "columns": "blogger_id,engagement_quality,brand_safety_score,integration_recommendations,ai_reasoning",
+        "values": "={{$json[\"blogger_id\"]}},{{$json[\"engagement_quality\"]}},{{$json[\"brand_safety_score\"]}},{{$json[\"integration_recommendations\"]}},{{$json}}",
+        "returnFields": "*"
+      },
+      "id": "save_analysis",
+      "name": "Upsert blogger_ai_analysis",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        220
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_ACCOUNT",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "responseCode": 200,
+        "responseData": {
+          "responseBody": "{\"status\":\"done\"}"
+        }
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook /neuro-kubik": {
+      "main": [
+        [
+          {
+            "node": "Get Client Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Client Profile": {
+      "main": [
+        [
+          {
+            "node": "Load Bloggers + platforms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Bloggers + platforms": {
+      "main": [
+        [
+          {
+            "node": "Split in Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split in Batches (50)": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Prompt (batch)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Prompt (batch)": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Chat (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Parse AI JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI JSON": {
+      "main": [
+        [
+          {
+            "node": "Upsert blogger_ai_analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert blogger_ai_analysis": {
+      "main": [
+        [
+          {
+            "node": "Split in Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "ca59121c-a7f7-4886-bd6e-e721b794f96c"
+}
