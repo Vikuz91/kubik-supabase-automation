@@ -1,9 +1,9 @@
 name: Supabase Auto-refresh Blogger Data
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Каждые 5 минут
-  workflow_dispatch:  # Ручной запуск
-  
+    - cron: '*/5 * * * *' # Каждые 5 минут
+  workflow_dispatch: # Ручной запуск
+
 jobs:
   refresh-blogger-data:
     runs-on: ubuntu-latest
@@ -11,7 +11,7 @@ jobs:
       - name: Trigger Supabase auto-refresh
         run: |
           response=$(curl -s -w "%{http_code}" -o response.json \
-            -X POST "${{ secrets.SUPABASE_URL }}/functions/v1/auto-refresh-webhook" \
+            -X POST "${{ secrets.SUPABASE_URL }}/functions/v1/auto-refresh-webhook-v3" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
             -H "Content-Type: application/json" \
             -d '{"source": "github-actions"}')
