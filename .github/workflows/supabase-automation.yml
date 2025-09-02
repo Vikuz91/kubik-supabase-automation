@@ -1,35 +1,191 @@
 name: Supabase Auto-refresh Blogger Data
+
 on:
   schedule:
-    - cron: '*/5 * * * *' # Каждые 5 минут
-  workflow_dispatch: # Ручной запуск
+    # Каждые 5 минут
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    # Ручной запуск с возможностью настройки параметров
+    inputs:
+      test_mode:
+        description: 'Включить тестовый режим'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      batch_size:
+        description: 'Размер батча (максимум записей за раз)'
+        required: false
+        default: '20'
+        type: string
 
 jobs:
   refresh-blogger-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
     steps:
-      - name: Trigger Supabase auto-refresh
+      - name: 📋 Подготовка переменных
+        id: vars
         run: |
-          response=$(curl -s -w "%{http_code}" -o response.json \
-            -X POST "${{ secrets.SUPABASE_URL }}/functions/v1/auto-refresh-webhook-v3" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+          echo "SUPABASE_URL=https://dvzhknjzljbkqlmcqsty.supabase.co" >> $GITHUB_ENV
+          echo "SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2emhrbmp6bGpia3FsbWNxc3R5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NDE5NjczMCwiZXhwIjoyMDU5NzcyNzMwfQ.pGog4d8F2ryFcSUIeaPzePPaQqvA-Ahl8wnbpLAIuic" >> $GITHUB_ENV
+          echo "TEST_MODE=${{ github.event.inputs.test_mode || 'false' }}" >> $GITHUB_ENV
+          echo "BATCH_SIZE=${{ github.event.inputs.batch_size || '20' }}" >> $GITHUB_ENV
+          echo "timestamp=$(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+
+      - name: 🔍 Проверка статуса системы (только в тестовом режиме)
+        if: env.TEST_MODE == 'true'
+        run: |
+          echo "🧪 Тестовый режим: проверяем статус системы автообновления..."
+          
+          status_response=$(curl -s -w "%{http_code}" -o status.json \
+            -X POST "${{ env.SUPABASE_URL }}/functions/v1/test-auto-refresh-system" \
+            -H "Authorization: Bearer ${{ env.SERVICE_KEY }}" \
             -H "Content-Type: application/json" \
-            -d '{"source": "github-actions"}')
+            -d '{"action": "status"}')
+          
+          echo "Статус проверки системы: $status_response"
+          
+          if [ "$status_response" -eq 200 ]; then
+            echo "✅ Система автообновления доступна"
+            cat status.json | jq '.'
+          else
+            echo "⚠️ Проблема с доступом к системе тестирования"
+            cat status.json
+          fi
+
+      - name: 🛠️ Установка тестовых флагов (только в тестовом режиме)
+        if: env.TEST_MODE == 'true'
+        run: |
+          echo "🧪 Устанавливаем needs_refresh=true для 5 записей..."
+          
+          set_flags_response=$(curl -s -w "%{http_code}" -o set_flags.json \
+            -X POST "${{ env.SUPABASE_URL }}/functions/v1/test-auto-refresh-system" \
+            -H "Authorization: Bearer ${{ env.SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"action": "set_flags", "limit": 5}')
+          
+          echo "Результат установки флагов: $set_flags_response"
+          cat set_flags.json | jq '.'
+
+      - name: 🚀 Запуск автообновления блогеров
+        id: refresh
+        run: |
+          echo "🔄 Запуск автообновления данных блогеров..."
+          echo "📊 Размер батча: ${{ env.BATCH_SIZE }}"
+          echo "⏰ Время запуска: ${{ steps.vars.outputs.timestamp }}"
+          
+          # Создаем payload с параметрами
+          if [ "${{ env.TEST_MODE }}" == "true" ]; then
+            payload='{"source": "github-actions-test", "batch_size": ${{ env.BATCH_SIZE }}}'
+          else
+            payload='{"source": "github-actions", "batch_size": ${{ env.BATCH_SIZE }}}'
+          fi
+          
+          # Выполняем запрос с детальным логированием
+          response=$(curl -s -w "%{http_code}" -o response.json \
+            -X POST "${{ env.SUPABASE_URL }}/functions/v1/auto-refresh-webhook" \
+            -H "Authorization: Bearer ${{ env.SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
           
           echo "HTTP Status: $response"
-          echo "Response:"
-          cat response.json
+          echo "📄 Полный ответ сервера:"
+          cat response.json | jq '.' || cat response.json
           
           # Проверяем успешность запроса
           if [ "$response" -eq 200 ]; then
-            echo "✅ Auto-refresh completed successfully"
+            # Извлекаем данные из ответа
+            processed=$(cat response.json | jq -r '.processed // 0')
+            updated=$(cat response.json | jq -r '.updated // 0')
+            needs_refresh_count=$(cat response.json | jq -r '.needs_refresh_count // 0')
+            
+            echo "✅ Автообновление завершено успешно!"
+            echo "📈 Статистика выполнения:"
+            echo "  - Найдено для обновления: $needs_refresh_count записей"
+            echo "  - Обработано в батче: $processed записей"
+            echo "  - Успешно обновлено: $updated записей"
+            
+            # Сохраняем результаты для следующих шагов
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "processed=$processed" >> $GITHUB_OUTPUT
+            echo "updated=$updated" >> $GITHUB_OUTPUT
+            echo "needs_refresh_count=$needs_refresh_count" >> $GITHUB_OUTPUT
           else
-            echo "❌ Auto-refresh failed with status $response"
+            echo "❌ Автообновление завершилось с ошибкой (HTTP $response)"
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "error_code=$response" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-      - name: Log results
+      - name: 📊 Сводка результатов
         if: always()
         run: |
-          echo "Timestamp: $(date)"
-          echo "Workflow completed"
+          echo "════════════════════════════════════════════"
+          echo "📋 СВОДКА ВЫПОЛНЕНИЯ АВТООБНОВЛЕНИЯ"
+          echo "════════════════════════════════════════════"
+          echo "⏰ Время выполнения: ${{ steps.vars.outputs.timestamp }}"
+          echo "🔧 Режим: ${{ env.TEST_MODE == 'true' && 'Тестовый' || 'Продуктивный' }}"
+          echo "📦 Размер батча: ${{ env.BATCH_SIZE }}"
+          
+          if [ "${{ steps.refresh.outputs.success }}" == "true" ]; then
+            echo "✅ Статус: УСПЕШНО"
+            echo "🔍 Найдено записей для обновления: ${{ steps.refresh.outputs.needs_refresh_count }}"
+            echo "⚙️ Обработано в батче: ${{ steps.refresh.outputs.processed }}"
+            echo "💾 Успешно обновлено: ${{ steps.refresh.outputs.updated }}"
+            
+            # Вычисляем процент успешности
+            if [ "${{ steps.refresh.outputs.processed }}" -gt 0 ]; then
+              success_rate=$(echo "scale=1; ${{ steps.refresh.outputs.updated }} * 100 / ${{ steps.refresh.outputs.processed }}" | bc -l 2>/dev/null || echo "N/A")
+              echo "📈 Процент успешности: ${success_rate}%"
+            fi
+          else
+            echo "❌ Статус: ОШИБКА"
+            echo "🔴 Код ошибки: ${{ steps.refresh.outputs.error_code }}"
+          fi
+          echo "════════════════════════════════════════════"
+
+      - name: 📈 Дополнительная статистика (только в тестовом режиме)
+        if: env.TEST_MODE == 'true' && steps.refresh.outputs.success == 'true'
+        run: |
+          echo "🧪 Получение дополнительной статистики..."
+          
+          final_status=$(curl -s -w "%{http_code}" -o final_status.json \
+            -X POST "${{ env.SUPABASE_URL }}/functions/v1/test-auto-refresh-system" \
+            -H "Authorization: Bearer ${{ env.SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"action": "status"}')
+          
+          if [ "$final_status" -eq 200 ]; then
+            echo "📊 Финальная статистика системы:"
+            cat final_status.json | jq '.'
+          fi
+
+      - name: 🚨 Уведомление об ошибке
+        if: failure()
+        run: |
+          echo "🚨 КРИТИЧЕСКАЯ ОШИБКА В АВТООБНОВЛЕНИИ!"
+          echo "════════════════════════════════════════════"
+          echo "⏰ Время ошибки: ${{ steps.vars.outputs.timestamp }}"
+          echo "🔧 Режим выполнения: ${{ env.TEST_MODE == 'true' && 'Тестовый' || 'Продуктивный' }}"
+          echo "💥 Задача завершилась неудачно"
+          echo ""
+          echo "📋 Проверьте логи выше для диагностики проблемы"
+          echo "🔧 Возможные причины:"
+          echo "  - Проблемы с доступом к Supabase"
+          echo "  - Ошибки в Edge Functions"
+          echo "  - Проблемы с API токенами"
+          echo "  - Превышение лимитов скорости"
+          echo "════════════════════════════════════════════"
+
+      - name: 💾 Сохранение артефактов (при ошибке)
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: error-logs-${{ github.run_number }}
+          path: |
+            *.json
+          retention-days: 7
