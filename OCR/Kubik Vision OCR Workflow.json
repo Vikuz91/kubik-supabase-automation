@@ -151,6 +151,12 @@
       "parameters": {
         "url": "={{$json.href}}",
         "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": true,
+              "maxRedirects": 5
+            }
+          },
           "response": {
             "response": {
               "responseFormat": "file"
