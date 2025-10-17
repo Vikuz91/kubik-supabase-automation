@@ -153,8 +153,7 @@
         "options": {
           "redirect": {
             "redirect": {
-              "followRedirects": true,
-              "maxRedirects": 5
+              "followRedirects": true
             }
           },
           "response": {
