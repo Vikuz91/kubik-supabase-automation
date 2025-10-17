@@ -340,7 +340,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Получаем бинарные данные через специальный хелпер n8n\nconst binaryPropertyName = 'data';\nconst binaryData = await this.helpers.getBinaryDataBuffer(0, binaryPropertyName);\n\n// Конвертируем в base64\nconst imageBase64 = binaryData.toString('base64');\n\nreturn [{\n  json: {\n    ...($input.item.json),\n    imageBase64: imageBase64,\n    imageSize: binaryData.length\n  }\n}];"
+        "jsCode": "// Получаем бинарные данные\nconst item = $input.item;\n\n// Определяем имя бинарного свойства (может быть 'data' или другое)\nconst binaryKeys = Object.keys(item.binary || {});\nif (binaryKeys.length === 0) {\n  throw new Error('Binary data not found in item');\n}\n\nconst binaryKey = binaryKeys[0]; // Берем первое доступное свойство\nconst buffer = await this.helpers.getBinaryDataBuffer(0, binaryKey);\n\n// Конвертируем в base64\nconst imageBase64 = buffer.toString('base64');\n\n// Проверяем что base64 не начинается с '='\nif (imageBase64.startsWith('=')) {\n  throw new Error('Invalid base64 encoding detected');\n}\n\nreturn [{\n  json: {\n    ...(item.json),\n    imageBase64: imageBase64,\n    imageSize: buffer.length,\n    binaryKey: binaryKey // Для отладки\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
