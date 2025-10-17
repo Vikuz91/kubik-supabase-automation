@@ -1,0 +1,555 @@
+{
+  "name": "Kubik Vision OCR Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": false
+        }
+      },
+      "id": "db90081a-acdf-4265-b047-280586a820bb",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        -832,
+        64
+      ],
+      "webhookId": "YOUR_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "5J2LFvBj5wkOGlry",
+          "name": "Telegram test"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Извлекаем ссылки из сообщения\nconst message = $input.item.json.message;\nconst text = message.text || '';\nconst chatId = message.chat.id;\nconst messageId = message.message_id;\nconst userName = message.from.first_name || 'User';\n\n// Регулярное выражение для поиска URL\nconst urlRegex = /(https?:\\/\\/[^\\s]+)/gi;\nconst links = text.match(urlRegex) || [];\n\n// ВАЖНО: всегда возвращаем массив\nif (links.length === 0) {\n  // Если нет ссылок, возвращаем один элемент с ошибкой\n  return [{\n    json: {\n      chatId,\n      messageId,\n      userName,\n      error: 'no_links',\n      text: text\n    }\n  }];\n}\n\n// Если есть ссылки, возвращаем каждую как отдельный элемент\nreturn links.map(link => ({\n  json: {\n    chatId,\n    messageId,\n    userName,\n    link: link.trim(),\n    originalText: text\n  }\n}));"
+      },
+      "id": "94ce6688-d25c-41e5-b738-f2c6928b7c7f",
+      "name": "Extract Links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.link}}",
+              "operation": "contains",
+              "value2": "drive.google.com"
+            }
+          ]
+        }
+      },
+      "id": "44a6611a-b307-4916-a39a-e5f92dd2177d",
+      "name": "Is Google Drive?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.link}}",
+              "operation": "contains",
+              "value2": "disk.yandex"
+            },
+            {
+              "value1": "={{$json.link}}",
+              "operation": "contains",
+              "value2": "yadi.sk"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "id": "696398e7-d33f-4593-b00d-659c669159fa",
+      "name": "Is Yandex Disk?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Извлекаем Google Drive File ID\nconst link = $input.item.json.link;\nlet fileId = '';\n\n// Расширенные паттерны для разных форматов ссылок Google Drive\nconst patterns = [\n  /\\/file\\/d\\/([a-zA-Z0-9_-]+)/,\n  /\\/open\\?id=([a-zA-Z0-9_-]+)/,\n  /[?&]id=([a-zA-Z0-9_-]+)/,\n  /uc\\?id=([a-zA-Z0-9_-]+)/,\n  /\\/d\\/([a-zA-Z0-9_-]+)/,\n  /drive\\.google\\.com\\/.*\\/([a-zA-Z0-9_-]{25,})/\n];\n\n// Пробуем все паттерны\nfor (const pattern of patterns) {\n  const match = link.match(pattern);\n  if (match && match[1]) {\n    fileId = match[1];\n    break;\n  }\n}\n\n// Если ID не найден, возвращаем ошибку\nif (!fileId) {\n  return [{\n    json: {\n      ...($input.item.json),\n      error: 'invalid_google_link',\n      errorMessage: 'Не удалось извлечь ID из ссылки Google Drive. Проверьте формат ссылки.'\n    }\n  }];\n}\n\n// Успешно извлекли ID\nreturn [{\n  json: {\n    ...($input.item.json),\n    fileId: fileId,\n    downloadUrl: `https://drive.google.com/uc?export=download&id=${fileId}`\n  }\n}];"
+      },
+      "id": "362f9117-4a00-4191-8499-f7d8939e675a",
+      "name": "Extract Google File ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -32,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/drive/v3/files/{{$json.fileId}}?alt=media",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "fc56c16b-dc7c-4d99-a261-905b49452e29",
+      "name": "Download from Google",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        176,
+        -48
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "pPTHYeWq8uvZ3s2C",
+          "name": "Google Vision Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key={{encodeURIComponent($json.link)}}",
+        "options": {}
+      },
+      "id": "0a726b10-2451-477a-9740-a37ddb08a434",
+      "name": "Get Yandex Download Link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -32,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json.href}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "da2ede18-f433-4858-83d6-6d6f771f7e04",
+      "name": "Download from Yandex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        176,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Объединяем данные с обеих веток (Google и Yandex)\nconst item = $input.item;\n\n// Определяем MIME тип из заголовков или расширения файла\nconst contentType = item.binary?.data?.mimeType || '';\nlet fileType = 'unknown';\n\nif (contentType.includes('image/')) {\n  fileType = 'image';\n} else if (contentType.includes('pdf') || contentType === 'application/pdf') {\n  fileType = 'pdf';\n} else if (contentType.includes('video/')) {\n  fileType = 'video';\n}\n\n// ✅ Возвращаем массив\nreturn [{\n  json: {\n    ...item.json,\n    fileType: fileType,\n    mimeType: contentType\n  },\n  binary: item.binary\n}];"
+      },
+      "id": "679b986a-6e33-41c6-9bc3-974df2b8dae7",
+      "name": "Detect File Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.fileType}}",
+              "value2": "video"
+            }
+          ]
+        }
+      },
+      "id": "f6ac6762-74a4-434b-a97c-900f11dac953",
+      "name": "Is Video?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        576,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chatId}}",
+        "text": "⚠️ Видео файлы пока не поддерживаются.\n\nПожалуйста, отправьте скриншот из видео с нужной статистикой.",
+        "additionalFields": {
+          "reply_to_message_id": "={{$json.messageId}}"
+        }
+      },
+      "id": "28f6495f-a924-49c5-aba6-3f8cc258ab2e",
+      "name": "Send Video Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        768,
+        -272
+      ],
+      "webhookId": "1a96abb0-dc1c-46cb-a45f-5712d7f5cfa6",
+      "credentials": {
+        "telegramApi": {
+          "id": "5J2LFvBj5wkOGlry",
+          "name": "Telegram test"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vision.googleapis.com/v1/images:annotate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "options": {},
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"requests\": [\n    {\n      \"image\": {\n        \"content\": \"={{$json.imageBase64}}\"\n      },\n      \"features\": [\n        {\n          \"type\": \"DOCUMENT_TEXT_DETECTION\"\n        }\n      ],\n      \"imageContext\": {\n        \"languageHints\": [\"ru\", \"en\"]\n      }\n    }\n  ]\n}"
+      },
+      "id": "5f02c772-186e-4cf5-912a-faaf71007a32",
+      "name": "Google Vision OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1088,
+        32
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "pPTHYeWq8uvZ3s2C",
+          "name": "Google Vision Service Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Извлекаем текст из ответа Vision API\nconst responses = $input.item.json.responses || [];\n\nif (responses.length === 0 || !responses[0].fullTextAnnotation) {\n  // ✅ Возвращаем массив даже при ошибке\n  return [{\n    json: {\n      ...($input.item.json),\n      recognizedText: '',\n      error: 'no_text_detected'\n    }\n  }];\n}\n\nlet text = responses[0].fullTextAnnotation.text || '';\n\n// Нормализуем текст\n// Убираем лишние пробелы и переводы строк\ntext = text.replace(/\\s+/g, ' ');\ntext = text.replace(/\\n+/g, '\\n');\ntext = text.trim();\n\n// ✅ Возвращаем массив\nreturn [{\n  json: {\n    ...($input.item.json),\n    recognizedText: text,\n    rawVisionResponse: responses[0]\n  }\n}];"
+      },
+      "id": "a7049f75-96d6-4753-9e45-c9c6b582ecab",
+      "name": "Normalize Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1296,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Парсим метрики из распознанного текста\nconst text = $input.item.json.recognizedText || '';\nconst metrics = {};\nlet platform = 'Unknown';\n\n// Определяем платформу\nif (text.match(/instagram/i)) platform = 'Instagram';\nelse if (text.match(/telegram/i)) platform = 'Telegram';\nelse if (text.match(/vk|вконтакте/i)) platform = 'VK';\nelse if (text.match(/youtube/i)) platform = 'YouTube';\nelse if (text.match(/tiktok/i)) platform = 'TikTok';\n\n// Паттерны для извлечения метрик\nconst patterns = {\n  followers: [\n    /подписчик(?:ов|и)?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /followers?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /subscriber(?:s)?[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  reach: [\n    /охват[:\\s]+(\\d[\\d\\s,]+)/i,\n    /reach[:\\s]+(\\d[\\d\\s,]+)/i,\n    /coverage[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  impressions: [\n    /показ(?:ы|ов)?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /impression(?:s)?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /views?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /просмотр(?:ы|ов)?[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  engagement: [\n    /вовлечен(?:ие|ность)[:\\s]+(\\d[\\d\\s,]+)/i,\n    /engagement[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  likes: [\n    /лайк(?:ов|и)?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /like(?:s)?[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  comments: [\n    /комментари(?:ев|и)?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /comment(?:s)?[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  shares: [\n    /репост(?:ов|ы)?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /share(?:s)?[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  clicks: [\n    /клик(?:ов|и)?[:\\s]+(\\d[\\d\\s,]+)/i,\n    /click(?:s)?[:\\s]+(\\d[\\d\\s,]+)/i\n  ],\n  ctr: [\n    /ctr[:\\s]+(\\d+[.,]?\\d*)\\s*%?/i,\n    /кликабельность[:\\s]+(\\d+[.,]?\\d*)\\s*%?/i\n  ]\n};\n\n// Функция для очистки чисел\nfunction cleanNumber(str) {\n  return parseInt(str.replace(/[\\s,]/g, ''), 10);\n}\n\nfunction cleanPercent(str) {\n  return parseFloat(str.replace(',', '.'));\n}\n\n// Извлекаем метрики\nfor (const [metric, regexes] of Object.entries(patterns)) {\n  for (const regex of regexes) {\n    const match = text.match(regex);\n    if (match && match[1]) {\n      if (metric === 'ctr') {\n        metrics[metric] = cleanPercent(match[1]);\n      } else {\n        metrics[metric] = cleanNumber(match[1]);\n      }\n      break;\n    }\n  }\n}\n\n// Проверяем полноту данных\nconst foundMetrics = Object.keys(metrics).length;\nconst status = foundMetrics >= 3 ? 'complete' : 'partial';\n\n// ✅ Возвращаем массив\nreturn [{\n  json: {\n    ...($input.item.json),\n    platform,\n    metrics,\n    status,\n    foundMetricsCount: foundMetrics\n  }\n}];"
+      },
+      "id": "d03c658a-c6f2-4293-ad20-31a75cb83380",
+      "name": "Parse Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Форматируем ответ для пользователя\nconst data = $input.item.json;\nconst platform = data.platform || 'Unknown';\nconst metrics = data.metrics || {};\nconst status = data.status || 'error';\n\n// Функция для форматирования числа с пробелами\nfunction formatNumber(num) {\n  if (num === undefined) return 'н/д';\n  return num.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' ');\n}\n\nlet response = `📊 **Статистика (${platform})**\\n\\n`;\n\n// Добавляем метрики\nif (metrics.followers) {\n  response += `👥 Подписчики: ${formatNumber(metrics.followers)}\\n`;\n}\nif (metrics.reach) {\n  response += `📈 Охват: ${formatNumber(metrics.reach)}\\n`;\n}\nif (metrics.impressions) {\n  response += `👁 Показы: ${formatNumber(metrics.impressions)}\\n`;\n}\nif (metrics.engagement) {\n  response += `💬 Вовлечённость: ${formatNumber(metrics.engagement)}\\n`;\n}\nif (metrics.likes) {\n  response += `❤️ Лайки: ${formatNumber(metrics.likes)}\\n`;\n}\nif (metrics.comments) {\n  response += `💭 Комментарии: ${formatNumber(metrics.comments)}\\n`;\n}\nif (metrics.shares) {\n  response += `🔄 Репосты: ${formatNumber(metrics.shares)}\\n`;\n}\nif (metrics.clicks) {\n  response += `🖱 Клики: ${formatNumber(metrics.clicks)}\\n`;\n}\nif (metrics.ctr) {\n  response += `📊 CTR: ${metrics.ctr}%\\n`;\n}\n\n// Добавляем предупреждение если данные неполные\nif (status === 'partial') {\n  response += `\\n⚠️ Некоторые данные не удалось распознать. Для более точного результата отправьте более чёткий скриншот.`;\n} else if (Object.keys(metrics).length === 0) {\n  response += `❌ Не удалось распознать метрики.\\n\\nПожалуйста, отправьте более чёткое изображение со статистикой.`;\n}\n\n// ✅ Возвращаем массив\nreturn [{\n  json: {\n    ...data,\n    formattedResponse: response\n  }\n}];"
+      },
+      "id": "e5c346a6-1396-4bbb-ac99-703bc9867c0b",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chatId}}",
+        "text": "={{$json.formattedResponse}}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "reply_to_message_id": "={{$json.messageId}}"
+        }
+      },
+      "id": "ba346340-6805-48e9-946c-f7ed493aef8c",
+      "name": "Send Result to Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        1888,
+        32
+      ],
+      "webhookId": "a06cde09-c827-4db8-8d4d-41d4b9908c73",
+      "credentials": {
+        "telegramApi": {
+          "id": "5J2LFvBj5wkOGlry",
+          "name": "Telegram test"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{$json.chatId}}",
+        "text": "❌ Ссылка не поддерживается.\\n\\nПожалуйста, отправьте ссылку на Google Drive или Яндекс.Диск.",
+        "additionalFields": {
+          "reply_to_message_id": "={{$json.messageId}}"
+        }
+      },
+      "id": "20f8ce9b-2075-4230-a6fd-e1ea601d69a4",
+      "name": "Send Unsupported Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        352
+      ],
+      "webhookId": "0498967c-f133-433f-9583-b790d589f194",
+      "credentials": {
+        "telegramApi": {
+          "id": "5J2LFvBj5wkOGlry",
+          "name": "Telegram test"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем бинарные данные через специальный хелпер n8n\nconst binaryPropertyName = 'data';\nconst binaryData = await this.helpers.getBinaryDataBuffer(0, binaryPropertyName);\n\n// Конвертируем в base64\nconst imageBase64 = binaryData.toString('base64');\n\nreturn [{\n  json: {\n    ...($input.item.json),\n    imageBase64: imageBase64,\n    imageSize: binaryData.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        80
+      ],
+      "id": "5d2f670b-4057-4ddc-bef6-c51fa25a2ad7",
+      "name": "Prepare Image for Vision"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Links": {
+      "main": [
+        [
+          {
+            "node": "Is Google Drive?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Google Drive?": {
+      "main": [
+        [
+          {
+            "node": "Extract Google File ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Yandex Disk?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Yandex Disk?": {
+      "main": [
+        [
+          {
+            "node": "Get Yandex Download Link",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unsupported Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Google File ID": {
+      "main": [
+        [
+          {
+            "node": "Download from Google",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download from Google": {
+      "main": [
+        [
+          {
+            "node": "Detect File Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Yandex Download Link": {
+      "main": [
+        [
+          {
+            "node": "Download from Yandex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download from Yandex": {
+      "main": [
+        [
+          {
+            "node": "Detect File Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect File Type": {
+      "main": [
+        [
+          {
+            "node": "Is Video?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Video?": {
+      "main": [
+        [
+          {
+            "node": "Send Video Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Image for Vision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Vision OCR": {
+      "main": [
+        [
+          {
+            "node": "Normalize Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Text": {
+      "main": [
+        [
+          {
+            "node": "Parse Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Metrics": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Send Result to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Image for Vision": {
+      "main": [
+        [
+          {
+            "node": "Google Vision OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "3b62b6d5-ec79-4481-be81-923f9c9e356d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "985a329f57641ed82947d97374f7338e0d4764ad6c54492c042bfb386afb3943"
+  },
+  "id": "k1BOZ3hKeYmEWcTu",
+  "tags": []
+}
